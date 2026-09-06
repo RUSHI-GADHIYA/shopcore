@@ -2,6 +2,7 @@ import request from 'supertest';
 import { createApp } from '../../src/app.js';
 import { User, ROLES } from '../../src/modules/users/user.model.js';
 import { connectTestDatabase, clearTestDatabase, disconnectTestDatabase } from '../setup/db.js';
+import * as auth from '../setup/auth.js';
 import { addressPayload, customerPayload, sellerPayload } from '../fixtures/users.js';
 
 const app = createApp();
@@ -11,23 +12,8 @@ beforeAll(connectTestDatabase);
 afterEach(clearTestDatabase);
 afterAll(disconnectTestDatabase);
 
-/** Registers a user and returns their access token plus id. */
-async function signUp(payload) {
-  const response = await request(app).post(`${api}/auth/register`).send(payload);
-  return { token: response.body.data.accessToken, user: response.body.data.user };
-}
-
-/** Admins cannot self-register, so one is promoted directly then signed in. */
-async function signUpAdmin() {
-  const { user } = await signUp({ ...customerPayload, email: 'admin@example.com' });
-  await User.updateOne({ _id: user.id }, { $set: { role: ROLES.ADMIN } });
-
-  const login = await request(app)
-    .post(`${api}/auth/login`)
-    .send({ email: 'admin@example.com', password: customerPayload.password });
-
-  return { token: login.body.data.accessToken, user: login.body.data.user };
-}
+const signUp = (payload) => auth.signUp(app, payload);
+const signUpAdmin = () => auth.signUpAdmin(app);
 
 describe('GET /users/me', () => {
   it('returns the current profile', async () => {

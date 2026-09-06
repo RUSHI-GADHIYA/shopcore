@@ -73,6 +73,10 @@ const envSchema = z
       .string()
       .min(16, 'PAYMENT_WEBHOOK_SECRET must be at least 16 characters'),
 
+    // Lets caching be switched off wholesale — used by the test suite, where a
+    // background Redis reconnect loop would outlive the tests, and useful when
+    // debugging whether a stale read is a cache problem or a query problem.
+    CACHE_ENABLED: booleanFromString(true),
     CACHE_TTL_PRODUCT_LIST: intFromString(300),
     CACHE_TTL_PRODUCT_DETAIL: intFromString(300),
     CACHE_TTL_CATEGORY_TREE: intFromString(3600),

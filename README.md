@@ -11,7 +11,7 @@ this README covers what exists today and how to run it.
 | ----- | ---------------------------------------------------------------------------- | ----------- |
 | 0     | Project setup, config, middleware, app wiring, health checks, Docker         | Done        |
 | 1     | Auth & users — register/login/refresh/logout, password reset, RBAC, profiles | Done        |
-| 2     | Product catalog — categories, products, search, caching, image upload        | Not started |
+| 2     | Product catalog — categories, products, search, caching, image upload        | Done        |
 | 3     | Cart & checkout — transactional order creation, order state machine          | Not started |
 | 4     | Payments & notifications — mock provider, webhooks, BullMQ queues            | Not started |
 | 5     | Reviews, coupons, admin dashboard                                            | Not started |
@@ -109,6 +109,53 @@ Base URL `/api/v1`. Every response uses one envelope:
 | DELETE | `/users/me/addresses/:addressId` | Auth   | Remove an address                  |
 | GET    | `/users`                         | Admin  | Search and page the user directory |
 | PATCH  | `/users/:id/status`              | Admin  | Ban / unban                        |
+
+### Catalogue
+
+| Method | Endpoint                         | Auth           | Description                             |
+| ------ | -------------------------------- | -------------- | --------------------------------------- |
+| GET    | `/categories`                    | Public         | Category tree (or `?format=flat`)       |
+| GET    | `/categories/:slug`              | Public         | One category                            |
+| POST   | `/categories`                    | Admin          | Create a category                       |
+| PATCH  | `/categories/:id`                | Admin          | Rename, re-parent, activate             |
+| DELETE | `/categories/:id`                | Admin          | Delete (refused while still referenced) |
+| GET    | `/products`                      | Public         | Search, filter, sort, paginate          |
+| GET    | `/products/:slug`                | Public         | Product detail                          |
+| POST   | `/products`                      | Seller / Admin | Create a product                        |
+| PATCH  | `/products/:id`                  | Owner / Admin  | Update                                  |
+| DELETE | `/products/:id`                  | Owner / Admin  | Soft delete                             |
+| POST   | `/products/:id/images`           | Owner / Admin  | Upload up to 5 images (multipart)       |
+| DELETE | `/products/:id/images/:filename` | Owner / Admin  | Remove one image                        |
+
+**Product listing query parameters:** `q` (full-text), `category` (slug — includes
+everything beneath it), `seller`, `minPrice`, `maxPrice`, `minRating`, `inStock`,
+`sort` (`newest`, `oldest`, `price`, `-price`, `rating`, `popularity`, `relevance`),
+`page`, `limit`. Unknown parameters are rejected rather than ignored, so a typo in
+a filter fails loudly instead of silently returning the wrong page.
+
+## Caching
+
+Product listings, product detail, and the category tree are cached in Redis
+(spec §14). Two decisions worth noting:
+
+- **The cache is an optimisation, never a dependency.** Every helper in
+  `src/utils/cache.js` swallows its own errors and reports a miss, so a Redis
+  outage degrades response times instead of returning 500s.
+- **Writes drop the whole listing namespace** rather than computing which cached
+  pages a change affected. An over-broad invalidation costs one repopulation; a
+  missed one serves a stale price.
+
+Invalidation uses `SCAN`, not `KEYS` — `KEYS` blocks the Redis event loop across
+the entire keyspace, which is harmless with ten keys and an outage with a million.
+Set `CACHE_ENABLED=false` to bypass Redis entirely.
+
+## File uploads
+
+Product images go through `multer` (memory storage) into `sharp`, which resizes
+to fit 1200px and re-encodes to WebP before anything touches disk. The
+re-encoding is the actual security control: a `.jpg` that is really a polyglot
+script does not survive being decoded and written back out. Filenames are
+generated server-side, so a crafted upload name can never influence the path.
 
 ## Security notes
 

@@ -1,3 +1,6 @@
+import os from 'node:os';
+import path from 'node:path';
+
 /**
  * Test environment defaults.
  *
@@ -20,3 +23,11 @@ process.env.PUBLIC_BASE_URL = 'http://localhost:5000';
 // The limiter middleware is exercised as part of the Phase 6 hardening pass.
 process.env.RATE_LIMIT_MAX = '100000';
 process.env.AUTH_RATE_LIMIT_MAX = '100000';
+
+// Redis is not running in CI; a background reconnect loop would also keep the
+// Jest worker alive past the last test.
+process.env.CACHE_ENABLED = 'false';
+
+// Upload tests write real files through sharp. Sending them to a temp
+// directory keeps the repository's uploads/ folder clean.
+process.env.UPLOAD_DIR = path.join(os.tmpdir(), 'shopcore-test-uploads');
