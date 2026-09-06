@@ -1,0 +1,7 @@
+node_modules/
+coverage/
+uploads/
+package-lock.json
+
+# The design document is hand-formatted; leave its tables and code blocks alone.
+ecommerce-backend-project.md

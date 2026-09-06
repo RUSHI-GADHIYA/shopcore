@@ -1,0 +1,79 @@
+# Local development dependencies (spec §19).
+#
+# Mongo runs as a single-node *replica set* rather than a standalone, because
+# checkout uses a multi-document transaction and standalone MongoDB cannot do
+# them. `mongo-init` performs the one-off rs.initiate() and then exits.
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: shopcore-mongo
+    command: ['--replSet', 'rs0', '--bind_ip_all']
+    ports:
+      - '27017:27017'
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ['CMD', 'mongosh', '--quiet', '--eval', 'db.adminCommand("ping")']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  mongo-init:
+    image: mongo:7
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: 'no'
+    entrypoint:
+      - bash
+      - -c
+      - |
+        mongosh --host mongo:27017 --quiet --eval '
+          try { rs.status(); print("replica set already initialised"); }
+          catch (e) {
+            rs.initiate({ _id: "rs0", members: [{ _id: 0, host: "mongo:27017" }] });
+            print("replica set initialised");
+          }
+        '
+
+  redis:
+    image: redis:7-alpine
+    container_name: shopcore-redis
+    command: ['redis-server', '--appendonly', 'yes']
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      target: production
+    container_name: shopcore-api
+    # The API is opt-in (`docker compose --profile app up`) so the common case —
+    # running Node on the host against containerised dependencies — stays simple.
+    profiles: ['app']
+    env_file: .env
+    environment:
+      MONGO_URI: mongodb://mongo:27017/shopcore?replicaSet=rs0&directConnection=true
+      REDIS_URL: redis://redis:6379
+    ports:
+      - '5000:5000'
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./uploads:/app/uploads
+
+volumes:
+  mongo-data:
+  redis-data:
