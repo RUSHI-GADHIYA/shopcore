@@ -15,7 +15,7 @@ const variantSchema = new mongoose.Schema(
     price: { type: Number, required: true, min: 0 },
     stock: { type: Number, required: true, min: 0, default: 0 },
   },
-  { _id: true, timestamps: false }
+  { _id: true, timestamps: false, toJSON: { virtuals: true } }
 );
 
 const productSchema = new mongoose.Schema(

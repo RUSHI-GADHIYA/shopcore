@@ -2,8 +2,9 @@
 
 Production-grade e-commerce backend — a modular monolith on Node.js, Express, MongoDB and Redis.
 
-The full design document lives in [`ecommerce-backend-project.md`](./ecommerce-backend-project.md);
-this README covers what exists today and how to run it.
+This README covers what exists today and how to run it. Section references
+below (spec §6.6, §7.4, and so on) point at the project's design document, which
+is kept outside the repository.
 
 ## Build status
 
@@ -12,7 +13,7 @@ this README covers what exists today and how to run it.
 | 0     | Project setup, config, middleware, app wiring, health checks, Docker         | Done        |
 | 1     | Auth & users — register/login/refresh/logout, password reset, RBAC, profiles | Done        |
 | 2     | Product catalog — categories, products, search, caching, image upload        | Done        |
-| 3     | Cart & checkout — transactional order creation, order state machine          | Not started |
+| 3     | Cart & checkout — transactional order creation, order state machine          | Done        |
 | 4     | Payments & notifications — mock provider, webhooks, BullMQ queues            | Not started |
 | 5     | Reviews, coupons, admin dashboard                                            | Not started |
 | 6     | Hardening — security pass, Swagger, coverage                                 | Not started |
@@ -132,6 +133,73 @@ everything beneath it), `seller`, `minPrice`, `maxPrice`, `minRating`, `inStock`
 `sort` (`newest`, `oldest`, `price`, `-price`, `rating`, `popularity`, `relevance`),
 `page`, `limit`. Unknown parameters are rejected rather than ignored, so a typo in
 a filter fails loudly instead of silently returning the wrong page.
+
+### Cart & orders
+
+| Method | Endpoint             | Auth                   | Description                                            |
+| ------ | -------------------- | ---------------------- | ------------------------------------------------------ |
+| GET    | `/cart`              | Auth                   | Current cart, reconciled against live prices and stock |
+| POST   | `/cart/items`        | Auth                   | Add or top up a line                                   |
+| PATCH  | `/cart/items/:sku`   | Auth                   | Set a line's quantity                                  |
+| DELETE | `/cart/items/:sku`   | Auth                   | Remove a line                                          |
+| POST   | `/orders/checkout`   | Auth                   | Turn the cart into an order                            |
+| GET    | `/orders`            | Auth                   | Orders, scoped by role                                 |
+| GET    | `/orders/:id`        | Owner / Seller / Admin | Order detail                                           |
+| PATCH  | `/orders/:id/cancel` | Owner / Admin          | Cancel and release stock                               |
+| PATCH  | `/orders/:id/status` | Seller / Admin         | Advance fulfilment                                     |
+
+Cart lines are addressed by **SKU**, not product id as the design document
+sketches: a product can sit in the cart several times under different variants,
+and SKUs are unique across the catalogue, so they identify a line unambiguously.
+
+`GET /cart` re-resolves every line against the live catalogue and reports what
+changed — `PRICE_CHANGED`, `OUT_OF_STOCK`, `INSUFFICIENT_STOCK`,
+`PRODUCT_UNAVAILABLE`. A price change is informational and the live price wins;
+the others block checkout, which is the difference between `hasIssues` and
+`isCheckoutable`.
+
+## Checkout and order integrity
+
+Two invariants shape the order module:
+
+**The server prices the order.** Checkout accepts an optional `addressId` and a
+note — nothing else. Not the items, not the quantities' cost, not the total.
+Line prices are re-read from the catalogue at the moment of checkout, so the
+`priceSnapshot` a client saw in its cart never becomes the price it pays.
+
+**Stock and the order move together.** Decrementing every variant, writing the
+order, and emptying the cart happen inside one MongoDB transaction — which is
+why the database has to run as a replica set. Each decrement is also a
+_conditional_ update whose filter asserts sufficient stock, so two simultaneous
+checkouts for the last unit cannot both succeed; the loser matches no document
+and the whole transaction rolls back. There is a test for exactly that race.
+
+Money is never added as floating point. Every calculation converts to integer
+cents first (`src/utils/money.js`), because `0.1 + 0.2` is `0.30000000000000004`
+and a thirty-line cart compounds that into a total that disagrees with the sum
+of its own lines.
+
+### Order state machine
+
+`src/modules/orders/order.state-machine.js` holds the transition table, the
+roles permitted to drive each transition, and which transitions return stock to
+the catalogue. Keeping it in one table rather than scattering status checks
+through the service means an illegal transition is impossible to express:
+
+```
+PENDING ─→ PAID ─→ PROCESSING ─→ SHIPPED ─→ DELIVERED
+   │        │          │              └─→ RETURNED ─→ REFUNDED
+   │        │          └─→ CANCELLED          ↑
+   │        └─→ CANCELLED / REFUNDED          │
+   ├─→ CANCELLED                     DELIVERED ┘
+   └─→ PAYMENT_FAILED ─→ PENDING (retry) / CANCELLED
+```
+
+Stock is held from `PENDING` through `DELIVERED` and released on any exit from
+that set — cancellation, refund, or return. An `stockReleasedAt` stamp written
+inside the transaction stops a repeated cancellation from crediting the
+catalogue twice. Payment outcomes (`PAID`, `PAYMENT_FAILED`) are reserved for
+the payment webhook in Phase 4 and cannot be set by any human role.
 
 ## Caching
 

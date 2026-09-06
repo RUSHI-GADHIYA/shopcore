@@ -82,6 +82,14 @@ const envSchema = z
     CACHE_TTL_CATEGORY_TREE: intFromString(3600),
 
     LOW_STOCK_THRESHOLD: intFromString(5),
+
+    // Order pricing. The spec's Order schema carries tax and shipping, so the
+    // rules that produce them belong in configuration rather than hard-coded in
+    // the checkout service.
+    TAX_RATE_PERCENT: z.coerce.number().min(0).max(100).default(0),
+    SHIPPING_FLAT_FEE: z.coerce.number().min(0).default(0),
+    FREE_SHIPPING_THRESHOLD: z.coerce.number().min(0).default(0),
+    ORDER_CANCELLATION_WINDOW_HOURS: intFromString(24),
   })
   // In production a wildcard CORS policy is almost always a mistake, so refuse to boot with one.
   .refine((cfg) => cfg.NODE_ENV !== 'production' || !cfg.CORS_ORIGINS.includes('*'), {

@@ -23,7 +23,9 @@ const addressSchema = new mongoose.Schema(
     country: { type: String, required: true, trim: true, maxlength: 100 },
     isDefault: { type: Boolean, default: false },
   },
-  { _id: true, timestamps: false }
+  // Without this the subdocument serialises `_id` but no `id`, unlike every
+  // other resource — and checkout takes an addressId the client must round-trip.
+  { _id: true, timestamps: false, toJSON: { virtuals: true } }
 );
 
 const userSchema = new mongoose.Schema(

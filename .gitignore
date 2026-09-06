@@ -1,6 +1,7 @@
 # Dependencies
 node_modules/
 
+ecommerce-backend-project.md
 # Environment
 .env
 .env.local
