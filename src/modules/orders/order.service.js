@@ -11,6 +11,7 @@ import { Product } from '../products/product.model.js';
 import { Cart } from '../cart/cart.model.js';
 import { Order } from './order.model.js';
 import { emailQueue } from '../../jobs/queues/email.queue.js';
+import * as couponService from '../coupons/coupon.service.js';
 import {
   CUSTOMER_CANCELLABLE,
   ORDER_STATUS,
@@ -35,7 +36,7 @@ const HOUR_MS = 60 * 60 * 1000;
  *     exist.
  */
 
-export async function checkout({ user, addressId, note }) {
+export async function checkout({ user, addressId, note, couponCode }) {
   if (!supportsTransactions()) {
     // Far better than the driver's "Transaction numbers are only allowed on a
     // replica set member or mongos", which sends people hunting in the wrong place.
@@ -50,7 +51,18 @@ export async function checkout({ user, addressId, note }) {
   if (!cart || cart.items.length === 0) throw ApiError.badRequest('Your cart is empty');
 
   const lines = await buildOrderLines(cart.items);
-  const pricing = priceOrder(lines);
+
+  // Validated before the transaction opens — a rejected coupon should fail fast
+  // and cheaply, without holding a transaction open while it is checked.
+  const applied = couponCode
+    ? await couponService.validateForOrder({
+        code: couponCode,
+        userId: user._id,
+        subtotal: subtotalOf(lines),
+      })
+    : null;
+
+  const pricing = priceOrder(lines, { discount: applied?.discount ?? 0 });
 
   const session = await mongoose.startSession();
 
@@ -91,6 +103,7 @@ export async function checkout({ user, addressId, note }) {
             items: lines,
             shippingAddress,
             ...pricing,
+            couponApplied: applied?.coupon._id ?? null,
             status: ORDER_STATUS.PENDING,
             statusHistory: [
               {
@@ -107,6 +120,18 @@ export async function checkout({ user, addressId, note }) {
       );
 
       order = created;
+
+      // Booked inside the transaction, so a limited coupon cannot be
+      // over-redeemed by two simultaneous checkouts.
+      if (applied) {
+        await couponService.recordRedemption({
+          coupon: applied.coupon,
+          userId: user._id,
+          orderId: created._id,
+          discount: applied.discount,
+          session,
+        });
+      }
 
       // The cart is emptied in the same transaction: a customer must never be
       // able to check the same cart out twice.
@@ -237,6 +262,15 @@ async function applyStatusChange({ order, to, actor, note }) {
         );
       }
 
+      // A cancelled order should not consume the customer's one use of a coupon.
+      if (order.couponApplied) {
+        await couponService.releaseRedemption({
+          couponId: order.couponApplied,
+          orderId: order._id,
+          session,
+        });
+      }
+
       order.status = to;
       // Stamped inside the transaction so a repeated cancellation cannot credit
       // the catalogue a second time.
@@ -350,6 +384,11 @@ async function buildOrderLines(cartItems) {
       lineTotal: fromCents(lineTotalCents(variant.price, item.quantity)),
     };
   });
+}
+
+/** Subtotal of a set of priced lines, in the same integer-cent arithmetic. */
+function subtotalOf(lines) {
+  return fromCents(lines.reduce((sum, line) => sum + lineTotalCents(line.price, line.quantity), 0));
 }
 
 /** All arithmetic in integer cents, converted back exactly once (see utils/money.js). */

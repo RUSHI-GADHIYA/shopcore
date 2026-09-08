@@ -6,6 +6,9 @@ import productRoutes from '../modules/products/product.routes.js';
 import cartRoutes from '../modules/cart/cart.routes.js';
 import orderRoutes from '../modules/orders/order.routes.js';
 import paymentRoutes from '../modules/payments/payment.routes.js';
+import reviewRoutes from '../modules/reviews/review.routes.js';
+import couponRoutes from '../modules/coupons/coupon.routes.js';
+import adminRoutes from '../modules/admin/admin.routes.js';
 
 /**
  * The versioned API surface. Every module contributes one router here, which
@@ -21,5 +24,8 @@ router.use('/products', productRoutes);
 router.use('/cart', cartRoutes);
 router.use('/orders', orderRoutes);
 router.use('/payments', paymentRoutes);
+router.use('/reviews', reviewRoutes);
+router.use('/coupons', couponRoutes);
+router.use('/admin', adminRoutes);
 
 export default router;

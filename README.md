@@ -15,7 +15,7 @@ is kept outside the repository.
 | 2     | Product catalog — categories, products, search, caching, image upload        | Done        |
 | 3     | Cart & checkout — transactional order creation, order state machine          | Done        |
 | 4     | Payments & notifications — mock provider, webhooks, BullMQ queues            | Done        |
-| 5     | Reviews, coupons, admin dashboard                                            | Not started |
+| 5     | Reviews, coupons, admin dashboard                                            | Done        |
 | 6     | Hardening — security pass, Swagger, coverage                                 | Not started |
 | 7     | Deploy                                                                       | Not started |
 

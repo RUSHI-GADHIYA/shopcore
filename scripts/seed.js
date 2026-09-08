@@ -11,6 +11,7 @@ import { connectDatabase, disconnectDatabase } from '../src/config/db.js';
 import { User, ROLES } from '../src/modules/users/user.model.js';
 import { Category } from '../src/modules/categories/category.model.js';
 import { Product } from '../src/modules/products/product.model.js';
+import { Coupon } from '../src/modules/coupons/coupon.model.js';
 import { slugify } from '../src/utils/generateSlug.js';
 
 const SEED_PASSWORD = 'Password123';
@@ -143,6 +144,50 @@ async function seedProducts(categories, seller) {
   return results;
 }
 
+const coupons = [
+  {
+    code: 'WELCOME10',
+    description: '10% off your first order',
+    discountType: 'PERCENT',
+    discountValue: 10,
+    maxDiscountAmount: 100,
+    maxUsagePerUser: 1,
+  },
+  {
+    code: 'FLAT25',
+    description: '$25 off orders over $200',
+    discountType: 'FLAT',
+    discountValue: 25,
+    minOrderValue: 200,
+    maxUsagePerUser: 3,
+  },
+  {
+    code: 'EXPIRED',
+    description: 'Deliberately expired, for exercising the rejection path',
+    discountType: 'PERCENT',
+    discountValue: 50,
+    expiresAt: new Date('2020-01-01'),
+  },
+];
+
+async function seedCoupons() {
+  const results = [];
+
+  for (const spec of coupons) {
+    const existing = await Coupon.findOne({ code: spec.code });
+    const coupon = existing ?? new Coupon({ code: spec.code });
+
+    // usedCount is deliberately left alone: re-seeding should not hand back
+    // redemptions that orders already placed have consumed.
+    coupon.set({ ...spec, isActive: spec.isActive ?? true });
+    await coupon.save();
+
+    results.push({ code: coupon.code, type: coupon.discountType, value: coupon.discountValue });
+  }
+
+  return results;
+}
+
 async function main() {
   if (env.NODE_ENV === 'production') {
     console.error('Refusing to seed a production database.');
@@ -162,6 +207,10 @@ async function main() {
 
   console.log('\nSeeded catalogue (%d categories)\n', categories.length);
   console.table(seededProducts);
+
+  const seededCoupons = await seedCoupons();
+  console.log('\nSeeded coupons\n');
+  console.table(seededCoupons);
 
   await disconnectDatabase();
 }

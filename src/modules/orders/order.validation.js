@@ -15,6 +15,8 @@ export const checkoutSchema = z
     // Omitted means "use my default address".
     addressId: objectId.optional(),
     note: z.string().trim().max(500).optional(),
+    // The code only; the discount it is worth is computed server-side.
+    couponCode: z.string().trim().toUpperCase().min(3).max(32).optional(),
   })
   .strict();
 
