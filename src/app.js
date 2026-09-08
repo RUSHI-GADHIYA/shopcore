@@ -9,7 +9,7 @@ import mongoSanitize from 'express-mongo-sanitize';
 import { env, isProduction, isTest } from './config/env.js';
 import { morganStream } from './config/logger.js';
 import requestId from './middlewares/requestId.middleware.js';
-import { globalLimiter } from './middlewares/rateLimiter.middleware.js';
+import { globalLimiter, initRateLimiters } from './middlewares/rateLimiter.middleware.js';
 import errorHandler from './middlewares/errorHandler.middleware.js';
 import notFound from './middlewares/notFound.middleware.js';
 import ApiError from './utils/ApiError.js';
@@ -27,6 +27,11 @@ import apiRoutes from './routes/index.js';
  */
 export function createApp() {
   const app = express();
+
+  // Built here, not at import and not per request: `server.js` has connected
+  // Redis by now, so the limiter can pick the shared store when one exists,
+  // and express-rate-limit refuses to be constructed inside a request handler.
+  initRateLimiters();
 
   // Rate limiting and secure cookies both depend on knowing the real client IP,
   // which behind a load balancer only arrives via X-Forwarded-For.

@@ -13,6 +13,7 @@
     "dev": "nodemon src/server.js",
     "worker": "node src/jobs/worker.js",
     "seed": "node scripts/seed.js",
+    "smoke": "node scripts/smoke.js",
     "test": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --runInBand",
     "test:watch": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --runInBand --watch",
     "test:coverage": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --runInBand --coverage",
