@@ -58,6 +58,7 @@ The app refuses to boot if any required variable is missing or malformed — see
 | `npm start`             | Start the server                              |
 | `npm run worker`        | Run the background job worker                 |
 | `npm run seed`          | Seed development data (blocked in production) |
+| `npm run smoke`         | Smoke-test a running instance over HTTP       |
 | `npm test`              | Jest — unit + integration                     |
 | `npm run test:coverage` | Tests with a coverage report                  |
 | `npm run lint`          | ESLint                                        |
@@ -343,8 +344,20 @@ simultaneous checkouts; cancelling an order gives the redemption back.
 ## Deployment
 
 CI (`.github/workflows/ci.yml`) runs on every push: lint, format check, tests on
-Node 20 and 22, a production dependency audit, and a Docker build that must
-boot and answer `/health` before it counts as passing.
+Node 20 and 22, a production dependency audit, and a Docker job that builds the
+image, runs it against real MongoDB and Redis containers, and smoke-tests it.
+
+The smoke test (`scripts/smoke.js`) checks a **running** instance over HTTP, so
+it can also be pointed at staging or production:
+
+```bash
+SMOKE_BASE_URL=https://shopcore.example npm run smoke
+```
+
+It exists because the Jest suite runs with `NODE_ENV=test`, and some failures
+only appear outside it. One of its checks asserts the `RateLimit` header is
+present — a limiter that has silently failed open still answers 200, so the
+missing header is the only signal that it stopped working.
 
 `render.yaml` deploys two services from one image — the API and the queue
 worker — sharing secrets so they cannot drift apart. MongoDB and Redis are not
