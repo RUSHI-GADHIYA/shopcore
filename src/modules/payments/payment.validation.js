@@ -21,3 +21,12 @@ export const webhookSchema = z
     data: z.object({ providerRef: z.string().min(1) }).passthrough(),
   })
   .passthrough();
+
+/** Development-only: which outcome to simulate for an existing payment. */
+export const simulateWebhookSchema = z
+  .object({
+    providerRef: z.string().min(1),
+    outcome: z.enum(['succeeded', 'failed', 'refunded']).default('succeeded'),
+    reason: z.string().trim().max(280).optional(),
+  })
+  .strict();

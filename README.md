@@ -52,17 +52,18 @@ The app refuses to boot if any required variable is missing or malformed — see
 
 ## Scripts
 
-| Command                 | What it does                                  |
-| ----------------------- | --------------------------------------------- |
-| `npm run dev`           | Start with nodemon                            |
-| `npm start`             | Start the server                              |
-| `npm run worker`        | Run the background job worker                 |
-| `npm run seed`          | Seed development data (blocked in production) |
-| `npm run smoke`         | Smoke-test a running instance over HTTP       |
-| `npm test`              | Jest — unit + integration                     |
-| `npm run test:coverage` | Tests with a coverage report                  |
-| `npm run lint`          | ESLint                                        |
-| `npm run format`        | Prettier                                      |
+| Command                 | What it does                                   |
+| ----------------------- | ---------------------------------------------- |
+| `npm run dev`           | Start with nodemon                             |
+| `npm start`             | Start the server                               |
+| `npm run worker`        | Run the background job worker                  |
+| `npm run seed`          | Seed development data (blocked in production)  |
+| `npm run smoke`         | Smoke-test a running instance over HTTP        |
+| `npm run e2e`           | Walk the whole flow against a running instance |
+| `npm test`              | Jest — unit + integration                      |
+| `npm run test:coverage` | Tests with a coverage report                   |
+| `npm run lint`          | ESLint                                         |
+| `npm run format`        | Prettier                                       |
 
 ## Architecture
 
@@ -233,6 +234,56 @@ the payment webhook in Phase 4 and cannot be set by any human role.
 | GET    | `/admin/dashboard`           | Admin          | Revenue, order counts, top products   |
 | GET    | `/admin/reports/low-stock`   | Admin / Seller | Variants at or below the threshold    |
 | GET    | `/admin/reports/sales-trend` | Admin          | Revenue per day                       |
+
+## The browser test harness
+
+`npm run dev`, then open <http://localhost:5000> — a dependency-free page
+(`public/`, no build step) that drives every endpoint the API exposes:
+
+- **Account** — register, sign in as any seeded role, edit the profile, manage
+  the address book.
+- **Catalog** — search, filter, sort, open a product, add a variant to the cart.
+- **Cart** — change quantities, watch the reconciliation flags, preview a
+  coupon, check out.
+- **Orders** — pay, simulate the gateway callback, replay it to see the
+  idempotency, cancel, advance fulfilment, review a delivered item.
+- **Seller** — create products, upload images, restock, low-stock report.
+- **Admin** — dashboard, sales trend, categories, coupons, ban and reinstate.
+
+Tabs are shown by role, but that is presentation only — the server enforces the
+same rules, and signing in as a customer and calling an admin route still
+returns 403. Each panel renders the raw JSON underneath, so what the API
+actually returned is always visible.
+
+**Two things worth knowing.** The access token is held in memory rather than
+localStorage: it lives fifteen minutes, the refresh cookie is httpOnly, and a
+reload re-authenticates silently — putting it in localStorage would hand it to
+any XSS for no benefit. And a 401 triggers exactly one refresh, shared between
+concurrent requests, because refresh tokens rotate on use and parallel attempts
+would look like a replayed token.
+
+### Simulating a payment
+
+A browser cannot sign a webhook — that needs `PAYMENT_WEBHOOK_SECRET`, which
+must never reach a client. So `POST /payments/dev/simulate` signs server-side
+and runs the result through the ordinary verified webhook path, exercising the
+signature check rather than bypassing it.
+
+**It is not registered at all when `NODE_ENV=production`**, so it cannot be used
+to forge a payment in a live deployment.
+
+### Checking the whole flow from the command line
+
+```bash
+npm run dev        # in one terminal
+npm run e2e        # in another
+```
+
+`scripts/e2e-flow.js` walks the entire system over real HTTP the way the browser
+does — sign-in for three roles, catalogue, cart, coupon, checkout, payment,
+webhook replay, fulfilment, reviews, dashboards, and session expiry — 43 checks
+in all. The Jest suite covers each module; this covers them joined together, and
+it found a real inconsistency the unit tests could not see (below).
 
 ## Caching
 

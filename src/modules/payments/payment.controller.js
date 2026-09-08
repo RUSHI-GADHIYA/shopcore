@@ -1,5 +1,6 @@
 import asyncHandler from '../../utils/asyncHandler.js';
 import { sendCreated, sendSuccess } from '../../utils/ApiResponse.js';
+import { MockPaymentProvider } from './providers/mock-payment.provider.js';
 import * as paymentService from './payment.service.js';
 
 export const initiatePayment = asyncHandler(async (req, res) => {
@@ -39,5 +40,34 @@ export const webhook = asyncHandler(async (req, res) => {
   return sendSuccess(res, {
     data: { received: true, duplicate: result.duplicate },
     message: result.duplicate ? 'Event already processed' : 'Event processed',
+  });
+});
+
+/**
+ * Development helper: signs a webhook payload server-side and runs it through
+ * the same handler a real gateway callback uses.
+ *
+ * A browser cannot do this itself, because signing needs PAYMENT_WEBHOOK_SECRET
+ * and that must never reach a client. The route is not registered at all when
+ * NODE_ENV=production, so this cannot be used to forge a payment in a live
+ * deployment — it takes no shortcut through the verification either, it just
+ * produces a genuinely signed request.
+ */
+export const simulateWebhook = asyncHandler(async (req, res) => {
+  const payload = {
+    event: `payment.${req.body.outcome}`,
+    data: { providerRef: req.body.providerRef, reason: req.body.reason },
+  };
+
+  const rawBody = Buffer.from(JSON.stringify(payload), 'utf8');
+
+  const result = await paymentService.handleWebhook({
+    rawBody,
+    signature: MockPaymentProvider.sign(rawBody),
+  });
+
+  return sendSuccess(res, {
+    data: { simulated: payload, duplicate: result.duplicate, order: result.order },
+    message: `Simulated ${payload.event}`,
   });
 });

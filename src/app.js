@@ -104,6 +104,11 @@ export function createApp() {
     })
   );
 
+  // The browser test harness (public/index.html). Static, dependency-free, and
+  // mounted at the root — it only ever resolves files that exist, so it cannot
+  // shadow /api, /health or /api-docs.
+  app.use(express.static(path.resolve('public'), { index: 'index.html', maxAge: 0 }));
+
   // Health checks sit outside the rate limiter: probes run constantly and must
   // never be throttled into reporting a false outage.
   app.use('/health', healthRoutes);

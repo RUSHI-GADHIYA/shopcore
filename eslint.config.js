@@ -4,7 +4,7 @@ import prettier from 'eslint-config-prettier';
 
 export default [
   {
-    ignores: ['node_modules/**', 'coverage/**', 'uploads/**'],
+    ignores: ['node_modules/**', 'coverage/**', 'uploads/**', 'logs/**'],
   },
   js.configs.recommended,
   {
@@ -25,6 +25,18 @@ export default [
       eqeqeq: ['error', 'smart'],
       'prefer-const': 'error',
       'no-var': 'error',
+    },
+  },
+  {
+    // The test harness runs in a browser, not Node: it has document and fetch,
+    // and none of Node's globals.
+    files: ['public/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 2023,
+      sourceType: 'module',
+      globals: {
+        ...globals.browser,
+      },
     },
   },
   {

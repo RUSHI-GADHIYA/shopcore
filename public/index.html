@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ShopCore — API test harness</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>🛒</text></svg>"
+    />
+  </head>
+  <body>
+    <header>
+      <h1>ShopCore</h1>
+      <span class="tag">API test harness</span>
+      <span class="spacer"></span>
+      <span id="whoami">Not signed in</span>
+      <button class="action secondary" id="sign-out" hidden>Sign out</button>
+      <a class="action secondary" href="/api-docs" target="_blank" rel="noopener">API docs</a>
+    </header>
+
+    <!-- Tabs are shown or hidden by role; the server enforces the same rules. -->
+    <nav id="tabs">
+      <button data-view="account" aria-selected="true">Account</button>
+      <button data-view="catalog">Catalog</button>
+      <button data-view="cart" data-requires="auth">Cart</button>
+      <button data-view="orders" data-requires="auth">Orders</button>
+      <button data-view="seller" data-requires="seller,admin">Seller</button>
+      <button data-view="admin" data-requires="admin">Admin</button>
+    </nav>
+
+    <main id="view"></main>
+    <div id="toasts"></div>
+
+    <script type="module" src="/js/app.js"></script>
+  </body>
+</html>

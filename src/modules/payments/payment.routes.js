@@ -1,8 +1,14 @@
 import { Router } from 'express';
+import { isProduction } from '../../config/env.js';
 import authenticate from '../../middlewares/auth.middleware.js';
 import validate from '../../middlewares/validate.middleware.js';
 import * as paymentController from './payment.controller.js';
-import { initiatePaymentSchema, orderIdParamSchema, webhookSchema } from './payment.validation.js';
+import {
+  initiatePaymentSchema,
+  orderIdParamSchema,
+  simulateWebhookSchema,
+  webhookSchema,
+} from './payment.validation.js';
 
 const router = Router();
 
@@ -91,6 +97,22 @@ router.post(
  *       403: { $ref: '#/components/responses/Forbidden' }
  *       404: { description: No payment has been started for that order }
  */
+/**
+ * Development only, and not registered at all in production.
+ *
+ * The browser test harness needs to trigger a gateway callback, which requires
+ * signing with PAYMENT_WEBHOOK_SECRET — a value that must never reach a client.
+ * This signs server-side and runs the result through the ordinary webhook path,
+ * so the verification logic is exercised rather than bypassed.
+ */
+if (!isProduction) {
+  router.post(
+    '/dev/simulate',
+    validate({ body: simulateWebhookSchema }),
+    paymentController.simulateWebhook
+  );
+}
+
 router.get('/:orderId', validate({ params: orderIdParamSchema }), paymentController.getPayment);
 
 export default router;
