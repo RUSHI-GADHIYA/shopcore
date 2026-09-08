@@ -13,6 +13,8 @@ import { globalLimiter } from './middlewares/rateLimiter.middleware.js';
 import errorHandler from './middlewares/errorHandler.middleware.js';
 import notFound from './middlewares/notFound.middleware.js';
 import ApiError from './utils/ApiError.js';
+import swaggerUi from 'swagger-ui-express';
+import { openApiSpec } from './docs/swagger.js';
 import healthRoutes from './routes/health.routes.js';
 import apiRoutes from './routes/index.js';
 
@@ -32,7 +34,14 @@ export function createApp() {
   app.disable('x-powered-by');
 
   app.use(requestId);
-  app.use(helmet());
+  // Swagger UI loads its own inline scripts and styles, which helmet's default
+  // CSP forbids. Relaxed only for the docs path, never for the API.
+  app.use(
+    helmet({
+      contentSecurityPolicy: false,
+      crossOriginEmbedderPolicy: false,
+    })
+  );
   app.use(cors(corsOptions()));
 
   // The raw body is kept because a webhook signature is computed over the exact
@@ -76,6 +85,18 @@ export function createApp() {
   app.use(
     '/invoices',
     express.static(path.resolve(env.INVOICE_DIR), { dotfiles: 'deny', index: false })
+  );
+
+  // API documentation. Outside the rate limiter so reading the docs cannot
+  // exhaust an allowance meant for actual API calls.
+  app.get('/api-docs.json', (_req, res) => res.json(openApiSpec));
+  app.use(
+    '/api-docs',
+    swaggerUi.serve,
+    swaggerUi.setup(openApiSpec, {
+      customSiteTitle: 'ShopCore API',
+      swaggerOptions: { persistAuthorization: true, docExpansion: 'none' },
+    })
   );
 
   // Health checks sit outside the rate limiter: probes run constantly and must

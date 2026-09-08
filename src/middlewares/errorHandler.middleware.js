@@ -95,6 +95,18 @@ function toApiError(error) {
     return ApiError.badRequest('Request body is not valid JSON');
   }
 
+  if (error?.type === 'entity.too.large') {
+    return new ApiError(413, 'Request body is too large', { code: 'PAYLOAD_TOO_LARGE' });
+  }
+
+  // body-parser and other http-errors consumers mark client-safe failures with
+  // `expose: true` and a 4xx status. Honouring that stops a rejected request
+  // being reported as a server fault, which is what a bare 500 would claim.
+  const status = error?.status ?? error?.statusCode;
+  if (error?.expose === true && Number.isInteger(status) && status >= 400 && status < 500) {
+    return new ApiError(status, error.message);
+  }
+
   return ApiError.internal(error?.message ?? 'Something went wrong', { cause: error });
 }
 
