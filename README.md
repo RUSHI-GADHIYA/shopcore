@@ -8,16 +8,16 @@ is kept outside the repository.
 
 ## Build status
 
-| Phase | Scope                                                                        | State       |
-| ----- | ---------------------------------------------------------------------------- | ----------- |
-| 0     | Project setup, config, middleware, app wiring, health checks, Docker         | Done        |
-| 1     | Auth & users — register/login/refresh/logout, password reset, RBAC, profiles | Done        |
-| 2     | Product catalog — categories, products, search, caching, image upload        | Done        |
-| 3     | Cart & checkout — transactional order creation, order state machine          | Done        |
-| 4     | Payments & notifications — mock provider, webhooks, BullMQ queues            | Done        |
-| 5     | Reviews, coupons, admin dashboard                                            | Done        |
-| 6     | Hardening — security pass, Swagger, coverage                                 | Done        |
-| 7     | Deploy                                                                       | Not started |
+| Phase | Scope                                                                        | State |
+| ----- | ---------------------------------------------------------------------------- | ----- |
+| 0     | Project setup, config, middleware, app wiring, health checks, Docker         | Done  |
+| 1     | Auth & users — register/login/refresh/logout, password reset, RBAC, profiles | Done  |
+| 2     | Product catalog — categories, products, search, caching, image upload        | Done  |
+| 3     | Cart & checkout — transactional order creation, order state machine          | Done  |
+| 4     | Payments & notifications — mock provider, webhooks, BullMQ queues            | Done  |
+| 5     | Reviews, coupons, admin dashboard                                            | Done  |
+| 6     | Hardening — security pass, Swagger, coverage                                 | Done  |
+| 7     | Deploy — CI/CD, Docker build verification, Render blueprint                  | Done  |
 
 ## Requirements
 
@@ -52,25 +52,29 @@ The app refuses to boot if any required variable is missing or malformed — see
 
 ## Scripts
 
-| Command                 | What it does                                      |
-| ----------------------- | ------------------------------------------------- |
-| `npm run dev`           | Start with nodemon                                |
-| `npm start`             | Start the server                                  |
-| `npm run seed`          | Seed development accounts (blocked in production) |
-| `npm test`              | Jest — unit + integration                         |
-| `npm run test:coverage` | Tests with a coverage report                      |
-| `npm run lint`          | ESLint                                            |
-| `npm run format`        | Prettier                                          |
+| Command                 | What it does                                  |
+| ----------------------- | --------------------------------------------- |
+| `npm run dev`           | Start with nodemon                            |
+| `npm start`             | Start the server                              |
+| `npm run worker`        | Run the background job worker                 |
+| `npm run seed`          | Seed development data (blocked in production) |
+| `npm test`              | Jest — unit + integration                     |
+| `npm run test:coverage` | Tests with a coverage report                  |
+| `npm run lint`          | ESLint                                        |
+| `npm run format`        | Prettier                                      |
 
 ## Architecture
 
 ```
 src/
 ├── config/       env validation, Mongo, Redis, Winston
-├── middlewares/  request id, auth, RBAC, validation, rate limiting, errors
-├── modules/      one folder per domain: model, routes, controller, service, validation
+├── docs/         OpenAPI definition
+├── jobs/         BullMQ queues, shared handlers, the worker entry point
+├── middlewares/  request id, auth, RBAC, validation, rate limiting, uploads, errors
+├── modules/      auth, users, categories, products, cart, orders,
+│                 payments, reviews, coupons, notifications, admin
 ├── routes/       versioned API index + health checks
-├── utils/        ApiError, ApiResponse, asyncHandler, pagination, slugs
+├── utils/        ApiError, ApiResponse, asyncHandler, pagination, slugs, cache, money
 ├── app.js        Express wiring (no I/O — this is what the tests mount)
 └── server.js     process entry: connect, listen, shut down gracefully
 ```
@@ -83,7 +87,9 @@ in-memory Mongo without opening a port.
 
 ## API
 
-Base URL `/api/v1`. Every response uses one envelope:
+Base URL `/api/v1`. Interactive documentation is served at **`/api-docs`**, and the raw OpenAPI 3.0 document at `/api-docs.json` — 40 paths, 50 operations, covering every endpoint below.
+
+Every response uses one envelope:
 
 ```jsonc
 // success
@@ -201,6 +207,32 @@ inside the transaction stops a repeated cancellation from crediting the
 catalogue twice. Payment outcomes (`PAID`, `PAYMENT_FAILED`) are reserved for
 the payment webhook in Phase 4 and cannot be set by any human role.
 
+### Payments
+
+| Method | Endpoint             | Auth          | Description                     |
+| ------ | -------------------- | ------------- | ------------------------------- |
+| POST   | `/payments/initiate` | Auth          | Start a payment for an order    |
+| POST   | `/payments/webhook`  | Signature     | Gateway callback (idempotent)   |
+| GET    | `/payments/:orderId` | Owner / Admin | The latest payment for an order |
+
+### Reviews, coupons, admin
+
+| Method | Endpoint                     | Auth           | Description                           |
+| ------ | ---------------------------- | -------------- | ------------------------------------- |
+| GET    | `/products/:id/reviews`      | Public         | Reviews plus a rating histogram       |
+| POST   | `/products/:id/reviews`      | Auth           | Review a product you have received    |
+| PATCH  | `/reviews/:id`               | Author         | Edit your own review                  |
+| DELETE | `/reviews/:id`               | Author / Admin | Remove a review                       |
+| PATCH  | `/reviews/:id/flag`          | Admin          | Hide or restore a review              |
+| POST   | `/coupons/preview`           | Auth           | Check a code against your cart        |
+| GET    | `/coupons`                   | Admin          | List coupons                          |
+| POST   | `/coupons`                   | Admin          | Create a coupon                       |
+| PATCH  | `/coupons/:id`               | Admin          | Update a coupon                       |
+| DELETE | `/coupons/:id`               | Admin          | Delete, or deactivate if already used |
+| GET    | `/admin/dashboard`           | Admin          | Revenue, order counts, top products   |
+| GET    | `/admin/reports/low-stock`   | Admin / Seller | Variants at or below the threshold    |
+| GET    | `/admin/reports/sales-trend` | Admin          | Revenue per day                       |
+
 ## Caching
 
 Product listings, product detail, and the category tree are cached in Redis
@@ -241,12 +273,137 @@ Beyond the standard `helmet` / `cors` / `hpp` / `express-mongo-sanitize` stack:
 - **Access tokens are re-checked against the database** on every request, so a banned
   user cannot keep working for the remainder of the token's life.
 
+## Background jobs
+
+Anything that should not block a response goes on a queue (spec §13): all
+transactional email, and invoice PDF generation after payment succeeds. The
+worker is a separate process (`npm run worker`), so rendering a PDF cannot
+starve HTTP requests of event-loop time.
+
+The producers and the worker share one set of handlers, so a job behaves
+identically wherever it runs. That matters because of the fallback: with
+`QUEUE_ENABLED=false`, `enqueue()` runs the handler inline instead of pushing
+it to BullMQ. The app is fully functional for a developer who has not started
+Redis, and the test suite exercises the real handlers rather than asserting
+that a mock was called.
+
+Enqueueing never throws. A notification that cannot be scheduled must not fail
+the order that triggered it.
+
+## Payments
+
+The mock gateway exists to reproduce the one thing about a real integration
+that actually shapes your code: **nothing is confirmed synchronously**.
+`POST /payments/initiate` records an intent and returns a checkout URL. The
+order becomes `PAID` only when the gateway calls back.
+
+- **Webhooks are signature-authenticated**, not session-authenticated —
+  HMAC-SHA256 over the raw request body, compared in constant time. `app.js`
+  retains the raw bytes because re-serialising parsed JSON can reorder keys and
+  invalidate the signature.
+- **Handling is idempotent.** Gateways retry until they see a 2xx, so the same
+  event arrives repeatedly. A `processedAt` stamp means a duplicate changes
+  nothing and still returns 200 — anything else makes the gateway retry forever.
+- **A late callback cannot rewrite history.** If the order has moved on (been
+  cancelled, say), the payment is still recorded but the order stays put.
+
+Swapping in Stripe means writing one adapter against
+`PaymentProvider` and widening the `PAYMENT_PROVIDER` enum. No order logic
+changes.
+
+Fire a webhook by hand in development:
+
+```bash
+BODY='{"event":"payment.succeeded","data":{"providerRef":"mock_..."}}'
+SIG=$(node -e "console.log(require('crypto').createHmac('sha256', process.env.PAYMENT_WEBHOOK_SECRET).update(process.argv[1]).digest('hex'))" "$BODY")
+
+curl -X POST http://localhost:5000/api/v1/payments/webhook \
+  -H "Content-Type: application/json" -H "x-shopcore-signature: $SIG" -d "$BODY"
+```
+
+## Reviews and coupons
+
+**Reviews** require a verified purchase: a review cannot exist without pointing
+at the `DELIVERED` order that entitles it, and paid is not enough — you have to
+have received the thing. One review per user per product is a unique index, not
+a check-then-write that a concurrent request slips between. Product ratings are
+recomputed by aggregation rather than adjusted incrementally, because
+incremental drifts the moment anything unusual happens.
+
+Moderation hides a review and drops it from the average without destroying it.
+Editing stays with the author even for an admin — moderation hides, it does not
+rewrite what somebody said.
+
+**Coupons** validate through one side-effect-free function that both checkout
+and the preview endpoint call, so they cannot disagree about what a code is
+worth. Redemption is booked inside the checkout transaction with a conditional
+`$inc`, so a coupon with a global limit cannot be over-redeemed by two
+simultaneous checkouts; cancelling an order gives the redemption back.
+
+## Deployment
+
+CI (`.github/workflows/ci.yml`) runs on every push: lint, format check, tests on
+Node 20 and 22, a production dependency audit, and a Docker build that must
+boot and answer `/health` before it counts as passing.
+
+`render.yaml` deploys two services from one image — the API and the queue
+worker — sharing secrets so they cannot drift apart. MongoDB and Redis are not
+declared there on purpose: **checkout needs a replica set** for its
+transactions, so point `MONGO_URI` at Atlas (a free M0 cluster is a replica set)
+and `REDIS_URL` at Upstash.
+
+Before going live, confirm:
+
+- `CORS_ORIGINS` names your real origins. The app refuses to boot in production
+  with a wildcard.
+- `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` and `PAYMENT_WEBHOOK_SECRET` are
+  generated, not copied from `.env.example`.
+- TLS terminates at the proxy. `trust proxy` is on in production so the real
+  client IP reaches the rate limiter and secure cookies are set.
+- SMTP is configured. In production the mailer throws rather than silently
+  discarding mail, which is deliberate — a missing configuration is a real
+  misconfiguration, not something to paper over.
+
 ## Testing
 
 ```bash
-npm test
+npm test              # unit + integration
+npm run test:coverage # with a coverage report
 ```
 
-Unit tests cover services in isolation. Integration tests run the real Express app
-against `mongodb-memory-server` (a single-node replica set, so transactions work)
-via supertest. The first run downloads the Mongo binary and takes a few minutes.
+360 tests across 20 suites. Unit tests cover the pieces worth isolating: the
+token service, the money arithmetic, the order state machine, the cache
+helpers, and the payment provider's signing. Integration tests run the real
+Express app against `mongodb-memory-server` — a single-node replica set, so
+transactions genuinely execute — via supertest. The first run downloads the
+MongoDB binary and takes a few minutes; after that the whole suite is about a
+minute.
+
+Some tests exist because the bug they describe is easy to write and hard to
+notice:
+
+- Two concurrent checkouts race for the last unit in stock; exactly one wins.
+- A cart of thirty lines whose total must equal the sum of its own lines.
+- A webhook signed for one payload and sent with another.
+- A `GIF89a<?php ... ?>` upload declared as `image/png`, rejected at the decode
+  step with nothing left on disk.
+- A coupon with a global limit of one, redeemed twice.
+
+Caching and queueing are switched off in tests (`CACHE_ENABLED=false`,
+`QUEUE_ENABLED=false`) so nothing needs Redis, and the rate limits are raised
+out of the way — the limiter is process-global state, so a suite exercising it
+would throttle itself. It has two dedicated files that lower the limits before
+importing the app instead.
+
+## Notes and known gaps
+
+- **`qs` is pinned by an npm override.** Express 4 depends on a version inside
+  its own advisory range with no release that moves off it. Revisit on the next
+  Express upgrade.
+- **The mock payment provider is a mock.** It signs and verifies exactly as a
+  real gateway does, but no money moves.
+- **Invoices and uploads are written to local disk**, which does not survive a
+  container restart on an ephemeral filesystem. S3 or Cloudinary is the
+  production answer; the upload middleware is the seam.
+- **Multi-vendor is single-vendor-shaped.** Orders record a seller per line and
+  sellers only see their own, but there is no payout or commission logic.

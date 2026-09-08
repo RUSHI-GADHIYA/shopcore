@@ -1,0 +1,26 @@
+# The build context is uploaded to the daemon before anything runs, so keeping
+# node_modules out of it is the difference between a fast build and a slow one.
+node_modules/
+npm-debug.log*
+
+.git/
+.github/
+
+# Never bake secrets or local state into an image.
+.env
+.env.*
+!.env.example
+
+logs/
+coverage/
+uploads/
+tests/
+
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+docker-compose.yml
+Dockerfile
+README.md

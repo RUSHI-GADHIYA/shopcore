@@ -1,0 +1,87 @@
+# Render blueprint (spec §19).
+#
+# Two services from one image: the API and the queue worker. They run the same
+# code and the same environment, differing only in their start command, so a job
+# behaves identically wherever it runs.
+#
+# MongoDB and Redis are deliberately not declared here. Checkout needs a replica
+# set for its transactions, which Render does not provide — point MONGO_URI at
+# Atlas (a free M0 cluster is a replica set) and REDIS_URL at Upstash.
+
+services:
+  - type: web
+    name: shopcore-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5000
+
+      # Generated once by Render and then held; never commit these.
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: PAYMENT_WEBHOOK_SECRET
+        generateValue: true
+
+      # Set these in the dashboard: they point at Atlas and Upstash.
+      - key: MONGO_URI
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false
+
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+
+  - type: worker
+    name: shopcore-worker
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    dockerCommand: node src/jobs/worker.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # The worker must share the API's secrets and connections, so it reads
+      # them from the web service rather than keeping a second copy that could
+      # drift.
+      - fromService:
+          type: web
+          name: shopcore-api
+          envVarKey: JWT_ACCESS_SECRET
+        key: JWT_ACCESS_SECRET
+      - fromService:
+          type: web
+          name: shopcore-api
+          envVarKey: JWT_REFRESH_SECRET
+        key: JWT_REFRESH_SECRET
+      - fromService:
+          type: web
+          name: shopcore-api
+          envVarKey: PAYMENT_WEBHOOK_SECRET
+        key: PAYMENT_WEBHOOK_SECRET
+      - key: MONGO_URI
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
