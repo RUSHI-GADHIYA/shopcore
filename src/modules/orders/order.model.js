@@ -79,6 +79,9 @@ const orderSchema = new mongoose.Schema(
     // the catalogue twice.
     stockReleasedAt: { type: Date, default: null },
 
+    // Written by the invoice job once payment succeeds.
+    invoiceUrl: { type: String, default: null },
+
     placedAt: { type: Date, default: Date.now },
     note: { type: String, maxlength: 500 },
   },

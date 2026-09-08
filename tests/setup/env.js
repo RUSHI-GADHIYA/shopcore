@@ -28,6 +28,11 @@ process.env.AUTH_RATE_LIMIT_MAX = '100000';
 // Jest worker alive past the last test.
 process.env.CACHE_ENABLED = 'false';
 
+// Jobs run inline instead of through BullMQ: no Redis in CI, and the suite
+// then exercises the real handlers rather than asserting a mock was called.
+process.env.QUEUE_ENABLED = 'false';
+
 // Upload tests write real files through sharp. Sending them to a temp
 // directory keeps the repository's uploads/ folder clean.
 process.env.UPLOAD_DIR = path.join(os.tmpdir(), 'shopcore-test-uploads');
+process.env.INVOICE_DIR = path.join(os.tmpdir(), 'shopcore-test-invoices');

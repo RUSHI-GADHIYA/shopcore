@@ -3,11 +3,7 @@ import { env } from '../../config/env.js';
 import logger from '../../config/logger.js';
 import ApiError from '../../utils/ApiError.js';
 import { User } from '../users/user.model.js';
-import {
-  sendPasswordChangedEmail,
-  sendPasswordResetEmail,
-  sendVerificationEmail,
-} from '../notifications/notification.service.js';
+import { emailQueue } from '../../jobs/queues/email.queue.js';
 import {
   createOneTimeToken,
   hashToken,
@@ -43,7 +39,7 @@ export async function register({ name, email, password, role }) {
     emailVerifyExpires: verification.expiresAt,
   });
 
-  await sendVerificationEmail({ to: user.email, name: user.name, token: verification.token });
+  await emailQueue.verifyEmail({ to: user.email, name: user.name, token: verification.token });
 
   // Registering signs you in; the account just cannot do verified-only things yet.
   const tokens = await issueTokens(user);
@@ -134,7 +130,7 @@ export async function forgotPassword(email) {
     { $set: { passwordResetTokenHash: reset.tokenHash, passwordResetExpires: reset.expiresAt } }
   );
 
-  await sendPasswordResetEmail({ to: user.email, name: user.name, token: reset.token });
+  await emailQueue.passwordReset({ to: user.email, name: user.name, token: reset.token });
 }
 
 export async function resetPassword({ token, password }) {
@@ -155,7 +151,7 @@ export async function resetPassword({ token, password }) {
   user.lockUntil = undefined;
   await user.save();
 
-  await sendPasswordChangedEmail({ to: user.email, name: user.name });
+  await emailQueue.passwordChanged({ to: user.email, name: user.name });
 }
 
 export async function verifyEmail(token) {

@@ -35,7 +35,17 @@ export function createApp() {
   app.use(helmet());
   app.use(cors(corsOptions()));
 
-  app.use(express.json({ limit: '1mb' }));
+  // The raw body is kept because a webhook signature is computed over the exact
+  // bytes sent; re-serialising the parsed object can reorder keys and would no
+  // longer match (see modules/payments).
+  app.use(
+    express.json({
+      limit: '1mb',
+      verify: (req, _res, buffer) => {
+        req.rawBody = buffer;
+      },
+    })
+  );
   app.use(express.urlencoded({ extended: true, limit: '1mb' }));
   app.use(cookieParser());
 
@@ -59,6 +69,13 @@ export function createApp() {
   app.use(
     '/uploads',
     express.static(path.resolve(env.UPLOAD_DIR), { dotfiles: 'deny', maxAge: '7d', index: false })
+  );
+
+  // Generated invoices. Served like uploads, but from their own directory so an
+  // invoice can never be reached through the product-image path.
+  app.use(
+    '/invoices',
+    express.static(path.resolve(env.INVOICE_DIR), { dotfiles: 'deny', index: false })
   );
 
   // Health checks sit outside the rate limiter: probes run constantly and must

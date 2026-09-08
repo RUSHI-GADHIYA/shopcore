@@ -9,8 +9,9 @@ import logger from '../../config/logger.js';
  * instead of failing, so local development and tests need no mail server. In
  * production a missing configuration is a real misconfiguration, so it throws.
  *
- * Callers should go through `notification.service.js`, which queues sends rather
- * than blocking the request.
+ * Nothing calls this directly: transactional mail goes through the email queue
+ * (`jobs/queues/email.queue.js`), whose handler owns the templates and calls
+ * this only from a worker, so an SMTP stall never blocks a request.
  */
 let transporter = null;
 

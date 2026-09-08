@@ -10,6 +10,7 @@ import { ROLES } from '../users/user.model.js';
 import { Product } from '../products/product.model.js';
 import { Cart } from '../cart/cart.model.js';
 import { Order } from './order.model.js';
+import { emailQueue } from '../../jobs/queues/email.queue.js';
 import {
   CUSTOMER_CANCELLABLE,
   ORDER_STATUS,
@@ -117,6 +118,11 @@ export async function checkout({ user, addressId, note }) {
       reference: order.reference,
       total: order.total,
     });
+
+    // After the commit, never inside it: an alert must not be able to roll the
+    // order back, and a queued job must not exist for a write that was undone.
+    await alertOnLowStock(lines);
+
     return order.toJSON();
   } finally {
     await session.endSession();
@@ -179,12 +185,15 @@ export async function cancelOrder({ actor, orderId, reason }) {
 
   assertTransition(order.status, ORDER_STATUS.CANCELLED);
 
-  return applyStatusChange({
+  const updated = await applyStatusChange({
     order,
     to: ORDER_STATUS.CANCELLED,
     actor,
     note: reason ?? 'Cancelled',
   });
+
+  await notifyStatusChange(order, reason ?? 'Cancelled');
+  return updated;
 }
 
 /** Seller/admin fulfilment updates. */
@@ -196,7 +205,10 @@ export async function updateStatus({ actor, orderId, status, note }) {
   assertRoleMayTransition(actor.role, status);
   assertTransition(order.status, status);
 
-  return applyStatusChange({ order, to: status, actor, note });
+  const updated = await applyStatusChange({ order, to: status, actor, note });
+
+  await notifyStatusChange(order, note);
+  return updated;
 }
 
 /**
@@ -239,6 +251,57 @@ async function applyStatusChange({ order, to, actor, note }) {
 
   logger.info('Order stock released', { orderId: String(order._id), status: to });
   return order.toJSON();
+}
+
+/**
+ * Warns each seller whose variant just dropped below the threshold (spec §6.10).
+ * Failures are swallowed: a missed alert must not fail a completed order.
+ */
+async function alertOnLowStock(lines) {
+  try {
+    const products = await Product.find({ _id: { $in: lines.map((line) => line.product) } })
+      .select('name variants seller')
+      .populate('seller', 'name email')
+      .lean();
+
+    const alerts = [];
+
+    for (const line of lines) {
+      const product = products.find((candidate) => String(candidate._id) === String(line.product));
+      const variant = product?.variants.find((candidate) => candidate.sku === line.sku);
+      if (!variant || !product.seller?.email) continue;
+
+      if (variant.stock <= env.LOW_STOCK_THRESHOLD) {
+        alerts.push(
+          emailQueue.lowStockAlert({
+            to: product.seller.email,
+            name: product.seller.name,
+            productName: product.name,
+            sku: variant.sku,
+            remaining: variant.stock,
+          })
+        );
+      }
+    }
+
+    await Promise.all(alerts);
+  } catch (error) {
+    logger.error('Failed to raise low-stock alerts', { error: error.message });
+  }
+}
+
+/** Tells the customer their order moved (spec §12). Queued, never inline. */
+async function notifyStatusChange(order, note) {
+  const populated = await Order.findById(order._id).populate('user', 'name email').lean();
+  if (!populated?.user) return;
+
+  await emailQueue.orderStatusChanged({
+    to: populated.user.email,
+    name: populated.user.name,
+    reference: populated.reference,
+    status: populated.status,
+    note,
+  });
 }
 
 /**

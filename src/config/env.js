@@ -90,6 +90,13 @@ const envSchema = z
     SHIPPING_FLAT_FEE: z.coerce.number().min(0).default(0),
     FREE_SHIPPING_THRESHOLD: z.coerce.number().min(0).default(0),
     ORDER_CANCELLATION_WINDOW_HOURS: intFromString(24),
+
+    // Background jobs. With queueing off, `enqueue` runs the handler inline
+    // instead — the app stays fully functional without Redis, and the test
+    // suite exercises the real handlers rather than a mock.
+    QUEUE_ENABLED: booleanFromString(true),
+    QUEUE_PREFIX: z.string().default('shopcore'),
+    INVOICE_DIR: z.string().default('uploads/invoices'),
   })
   // In production a wildcard CORS policy is almost always a mistake, so refuse to boot with one.
   .refine((cfg) => cfg.NODE_ENV !== 'production' || !cfg.CORS_ORIGINS.includes('*'), {
