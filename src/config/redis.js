@@ -51,12 +51,36 @@ export async function connectRedis() {
   return client;
 }
 
+/**
+ * Closes every client.
+ *
+ * `quit()` sends a command and waits for the server to acknowledge it, so on a
+ * client that never connected — or whose Redis has gone away — it simply never
+ * settles, and the reconnect timer keeps the process alive. Anything not
+ * actually connected is therefore torn down directly, and even a healthy quit
+ * is bounded, so shutdown cannot hang on an unresponsive server.
+ */
 export async function disconnectRedis() {
+  const clients = [cacheClient, queueClient].filter(Boolean);
+
   await Promise.all(
-    [cacheClient, queueClient]
-      .filter(Boolean)
-      .map((client) => client.quit().catch(() => client.disconnect()))
+    clients.map(async (client) => {
+      if (client.status !== 'ready') return client.disconnect();
+
+      try {
+        await Promise.race([
+          client.quit(),
+          new Promise((_resolve, reject) =>
+            setTimeout(() => reject(new Error('quit timed out')), 2_000).unref?.()
+          ),
+        ]);
+      } catch {
+        client.disconnect();
+      }
+      return undefined;
+    })
   );
+
   cacheClient = null;
   queueClient = null;
 }

@@ -1,6 +1,6 @@
 import rateLimit from 'express-rate-limit';
 import { RedisStore } from 'rate-limit-redis';
-import { env, isTest } from '../config/env.js';
+import { env } from '../config/env.js';
 import { getRedis } from '../config/redis.js';
 import ApiError from '../utils/ApiError.js';
 import logger from '../config/logger.js';
@@ -10,34 +10,81 @@ import logger from '../config/logger.js';
  *
  * Counters live in Redis so the limit is shared across app instances — an
  * in-memory store would let an attacker get N times the allowance behind a load
- * balancer. If Redis is unavailable the store falls back to memory rather than
- * failing the request: degraded limiting beats an outage.
+ * balancer. When Redis is unreachable the limiter falls back to memory:
+ * degraded limiting beats an outage.
+ *
+ * Two details here exist because getting them wrong takes the whole API down,
+ * which is what happened the first time this shipped:
+ *
+ *  1. The store is chosen on the first request, not at import time.
+ *     `new RedisStore()` loads a Lua script in its constructor, and against a
+ *     client with `enableOfflineQueue: false` that command throws immediately.
+ *     At import time there is nothing to catch it, so the process died on boot
+ *     whenever Redis was not already up.
+ *
+ *  2. The choice is made from the client's actual connection status rather than
+ *     by calling `connect()`. A `connect()` on a dead Redis retries on a
+ *     schedule and can outlive the request that triggered it.
  */
 function createStore(prefix) {
-  if (isTest) return undefined;
-
   try {
     const client = getRedis();
-    return new RedisStore({
-      prefix,
-      sendCommand: (...args) => client.call(...args),
-    });
+
+    // Not connected: `server.js` connects Redis before it listens, so a client
+    // that is not ready by the first request means Redis is genuinely absent.
+    if (client.status !== 'ready') {
+      logger.warn('Redis is not connected; rate limiting falls back to in-memory counters', {
+        prefix,
+        status: client.status,
+      });
+      return undefined;
+    }
+
+    return new RedisStore({ prefix, sendCommand: (...args) => client.call(...args) });
   } catch (error) {
-    logger.warn('Rate limiter falling back to in-memory store', { error: error.message });
+    logger.warn('Rate limiter falling back to in-memory counters', {
+      prefix,
+      error: error.message,
+    });
     return undefined;
   }
 }
 
+/**
+ * Builds the limiter on first use and reuses it thereafter.
+ *
+ * If the store itself fails mid-flight — a Redis blip after a healthy start —
+ * the request is allowed through rather than 500ing. A rate limiter exists to
+ * shed abuse, and failing open degrades that protection; failing closed would
+ * take down every endpoint it guards, which is strictly worse.
+ */
 function buildLimiter({ prefix, windowMs, limit, message, keyGenerator }) {
-  return rateLimit({
-    windowMs,
-    limit,
-    standardHeaders: 'draft-7',
-    legacyHeaders: false,
-    store: createStore(prefix),
-    keyGenerator,
-    handler: (_req, _res, next) => next(new ApiError(429, message)),
-  });
+  let limiter = null;
+
+  return function rateLimitMiddleware(req, res, next) {
+    limiter ??= rateLimit({
+      windowMs,
+      limit,
+      standardHeaders: 'draft-7',
+      legacyHeaders: false,
+      store: createStore(prefix),
+      keyGenerator,
+      handler: (_req, _res, done) => done(new ApiError(429, message)),
+    });
+
+    return limiter(req, res, (error) => {
+      // A 429 from our own handler is the limiter working; anything else came
+      // from the store and must not be allowed to fail the request.
+      if (error && !(error instanceof ApiError)) {
+        logger.error('Rate limiter store failed; allowing the request through', {
+          prefix,
+          error: error.message,
+        });
+        return next();
+      }
+      return next(error);
+    });
+  };
 }
 
 /** Applied to the whole API surface. */
